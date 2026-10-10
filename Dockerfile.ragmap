@@ -63,7 +63,7 @@ RUN uv pip install --python ${VIRTUAL_ENV}/bin/python --no-deps --no-build-isola
         'git+https://github.com/facebookresearch/detectron2.git@710e7795d0eeadf9def0e7ef957eea13532e34cf'
 COPY openmask3d/class_agnostic_mask_computation/third_party/pointnet2 /tmp/pointnet2
 RUN cd /tmp/pointnet2 && uv pip install --python ${VIRTUAL_ENV}/bin/python --no-deps --no-build-isolation . \
-    && rm -rf /tmp/pointnet2 && uv cache clean
+    && cd / && rm -rf /tmp/pointnet2 && uv cache clean
 
 FROM ${CUDA_RUNTIME}
 ARG OPENMASK3D_GIT_SHA=unknown
