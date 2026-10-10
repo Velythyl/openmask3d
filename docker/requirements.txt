@@ -1,0 +1,47 @@
+# Upstream install_requirements.sh pins (OpenMask3D @ 3bc3fc5), less the
+# packages built in the builder stage (MinkowskiEngine, detectron2, pointnet2),
+# the --no-deps ones (hydra, clip, segment-anything; see Dockerfile.ragmap) and
+# torch itself. numpy is unpinned upstream; 1.23.5 satisfies scipy 1.9.3,
+# scikit-learn 1.2.0 and open3d 0.16.0 on Python 3.8.
+numpy==1.23.5
+ninja==1.10.2.3
+pytorch-lightning==1.7.2
+fire==0.5.0
+imageio==2.23.0
+tqdm==4.64.1
+wandb==0.13.2
+python-dotenv==0.21.0
+pyviz3d==0.2.32
+scipy==1.9.3
+plyfile==0.7.4
+scikit-learn==1.2.0
+trimesh==3.17.1
+loguru==0.6.0
+albumentations==1.3.0
+volumentations==0.1.8
+pynvml==11.4.1
+gpustat==1.0.0
+tabulate==0.9.0
+tensorboardx==2.5.1
+yapf==0.32.0
+termcolor==2.1.1
+addict==2.4.0
+blessed==1.19.1
+gorilla-core==0.2.7.8
+matplotlib==3.7.2
+cython
+pycocotools==2.0.6
+h5py==3.7.0
+transforms3d==0.4.1
+open3d==0.16.0
+torchmetrics==0.11.0
+fvcore==0.1.5.post20221221
+cloudpickle==2.1.0
+Pillow==9.3.0
+ftfy==6.1.1
+regex==2023.10.3
+setuptools==68.0.0
+# OpenLex3D ran OpenMask3D with OpenCLIP ViT-H-14 (laion2b_s32b_b79k), the
+# benchmark backbone (paper Sec. 4; the published embeddings are 1024-d). The
+# adapter loads it; upstream's OpenAI `clip` stays installed for its import.
+open_clip_torch==2.20.0

@@ -1,0 +1,97 @@
+# OpenMask3D (original release, OpenMask3D/openmask3d @ 3bc3fc5) + RAGMAP adapter,
+# as an "object_mapping" container. See ragmap_adapter/README.md.
+#
+# The stack is upstream's (install_requirements.sh): Python 3.8, torch 1.12.1 +
+# CUDA 11.3, MinkowskiEngine, detectron2 @ 710e779, the pointnet2 extension,
+# hydra-core 1.0.5. The compiled extensions are built in a CUDA *devel* stage;
+# the runtime stage copies the finished virtualenv onto the CUDA runtime image.
+# Model weights are NOT baked in: mount them at /weights (scannet200_model.ckpt,
+# sam_vit_h_4b8939.pth, open_clip_vit_h14_laion2b_s32b_b79k.bin).
+#
+# GPU architectures: CUDA 11.3 cannot target sm_89/sm_90. sm_86 cubins run on
+# sm_89 (L40S); A100 (sm_80), RTX 8000 (sm_75) and V100 (sm_70) are native.
+# H100 (sm_90) is not supported by this stack.
+ARG CUDA_DEVEL=nvidia/cuda:11.3.1-cudnn8-devel-ubuntu20.04
+ARG CUDA_RUNTIME=nvidia/cuda:11.3.1-cudnn8-runtime-ubuntu20.04
+
+FROM ${CUDA_DEVEL} AS builder
+ARG UV_VERSION=0.9.18
+ENV DEBIAN_FRONTEND=noninteractive \
+    VIRTUAL_ENV=/opt/openmask3d/.venv \
+    UV_PYTHON_INSTALL_DIR=/opt/uv-python \
+    TORCH_CUDA_ARCH_LIST="7.0;7.5;8.0;8.6+PTX" \
+    FORCE_CUDA=1 \
+    MAX_JOBS=2 \
+    PATH=/opt/openmask3d/.venv/bin:/root/.local/bin:$PATH
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends \
+        ca-certificates curl git build-essential libopenblas-dev \
+    && rm -rf /var/lib/apt/lists/* \
+    && curl --fail --location --silent --show-error https://astral.sh/uv/${UV_VERSION}/install.sh | sh
+RUN uv python install 3.8 \
+    && uv venv --seed --python 3.8 ${VIRTUAL_ENV} \
+    && uv pip install --python ${VIRTUAL_ENV}/bin/python \
+        --index-url https://download.pytorch.org/whl/cu113 \
+        --extra-index-url https://pypi.org/simple \
+        --index-strategy unsafe-best-match \
+        torch==1.12.1+cu113 torchvision==0.13.1+cu113 \
+    && printf 'torch==1.12.1+cu113\ntorchvision==0.13.1+cu113\n' > /opt/torch-constraints.txt
+COPY docker/requirements.txt /tmp/openmask3d-requirements.txt
+RUN uv pip install --python ${VIRTUAL_ENV}/bin/python \
+        --index-url https://download.pytorch.org/whl/cu113 \
+        --extra-index-url https://pypi.org/simple \
+        --index-strategy unsafe-best-match \
+        --constraints /opt/torch-constraints.txt -r /tmp/openmask3d-requirements.txt \
+    && uv pip install --python ${VIRTUAL_ENV}/bin/python --no-deps \
+        antlr4-python3-runtime==4.8 black==21.4b2 omegaconf==2.0.6 hydra-core==1.0.5 \
+    && uv pip install --python ${VIRTUAL_ENV}/bin/python --no-deps \
+        torch-scatter -f https://data.pyg.org/whl/torch-1.12.1+cu113.html \
+    && uv pip install --python ${VIRTUAL_ENV}/bin/python --no-deps \
+        'git+https://github.com/openai/CLIP.git@a9b1bf5920416aaeaec965c25dd9e8f98c864f16' \
+        'git+https://github.com/facebookresearch/segment-anything.git@6fdee8f2727f4506cfbbe553e23b895e27956588'
+# MinkowskiEngine: upstream installs NVIDIA/MinkowskiEngine master; pinned here
+# to its last commit (02fc608, v0.5.4), built against OpenBLAS as upstream does.
+RUN git clone https://github.com/NVIDIA/MinkowskiEngine.git /tmp/ME \
+    && cd /tmp/ME && git checkout 02fc608bea4c0549b0a7b00ca1bf15dee4a0b228 \
+    && python setup.py install --force_cuda --blas=openblas \
+    && cd / && rm -rf /tmp/ME
+RUN uv pip install --python ${VIRTUAL_ENV}/bin/python --no-deps --no-build-isolation \
+        'git+https://github.com/facebookresearch/detectron2.git@710e7795d0eeadf9def0e7ef957eea13532e34cf'
+COPY openmask3d/class_agnostic_mask_computation/third_party/pointnet2 /tmp/pointnet2
+RUN cd /tmp/pointnet2 && uv pip install --python ${VIRTUAL_ENV}/bin/python --no-deps --no-build-isolation . \
+    && rm -rf /tmp/pointnet2 && uv cache clean
+
+FROM ${CUDA_RUNTIME}
+ARG OPENMASK3D_GIT_SHA=unknown
+ENV DEBIAN_FRONTEND=noninteractive \
+    OPENMASK3D_ROOT=/opt/openmask3d \
+    VIRTUAL_ENV=/opt/openmask3d/.venv \
+    OPENMASK3D_WEIGHTS=/weights \
+    OPENMASK3D_GIT_SHA=${OPENMASK3D_GIT_SHA} \
+    OMP_NUM_THREADS=3 \
+    MPLBACKEND=Agg \
+    PYTHONUNBUFFERED=1 \
+    PYTHONPATH=/opt/openmask3d \
+    PATH=/opt/openmask3d/.venv/bin:$PATH
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends \
+        ca-certificates libopenblas0 libgomp1 libgl1 libegl1 libglib2.0-0 \
+        libx11-6 libxext6 libxrender1 libsm6 libusb-1.0-0 \
+    && rm -rf /var/lib/apt/lists/*
+COPY --from=builder /opt/uv-python /opt/uv-python
+COPY --from=builder /opt/openmask3d/.venv /opt/openmask3d/.venv
+COPY . /opt/openmask3d
+WORKDIR /opt/openmask3d
+RUN python -c "import torch, MinkowskiEngine, detectron2, torch_scatter, open3d, open_clip, clip, segment_anything, hydra; \
+assert torch.version.cuda == '11.3', torch.version.cuda; \
+import sys; sys.path.insert(0, 'openmask3d/class_agnostic_mask_computation'); \
+from third_party.pointnet2 import pointnet2_utils; \
+from trainer.trainer import InstanceSegmentation; \
+from openmask3d.mask_features_computation.features_extractor import FeaturesExtractor; \
+import ragmap_adapter.run; print('imports ok', MinkowskiEngine.__version__)" \
+    && printf '#!/bin/sh\nexec python -m ragmap_adapter.run "$@"\n' > /usr/local/bin/ragmap-run \
+    && chmod +x /usr/local/bin/ragmap-run && ragmap-run --help >/dev/null
+
+VOLUME ["/weights"]
+ENTRYPOINT ["ragmap-run"]
+CMD ["--help"]
