@@ -35,12 +35,15 @@ RUN uv python install 3.8 \
         --extra-index-url https://pypi.org/simple \
         --index-strategy unsafe-best-match \
         torch==1.12.1+cu113 torchvision==0.13.1+cu113 \
-    && printf 'torch==1.12.1+cu113\ntorchvision==0.13.1+cu113\n' > /opt/torch-constraints.txt
+    && printf 'torch==1.12.1+cu113\ntorchvision==0.13.1+cu113\n' > /opt/torch-constraints.txt \
+    && printf 'cython<3\nsetuptools<70\nnumpy==1.23.5\n' > /opt/build-constraints.txt
+# pycocotools 2.0.6 (and other 2022-era sdists) do not compile under Cython 3.
 COPY docker/requirements.txt /tmp/openmask3d-requirements.txt
 RUN uv pip install --python ${VIRTUAL_ENV}/bin/python \
         --index-url https://download.pytorch.org/whl/cu113 \
         --extra-index-url https://pypi.org/simple \
         --index-strategy unsafe-best-match \
+        --build-constraints /opt/build-constraints.txt \
         --constraints /opt/torch-constraints.txt -r /tmp/openmask3d-requirements.txt \
     && uv pip install --python ${VIRTUAL_ENV}/bin/python --no-deps \
         antlr4-python3-runtime==4.8 black==21.4b2 omegaconf==2.0.6 hydra-core==1.0.5 \

@@ -29,7 +29,7 @@ addict==2.4.0
 blessed==1.19.1
 gorilla-core==0.2.7.8
 matplotlib==3.7.2
-cython
+cython<3
 pycocotools==2.0.6
 h5py==3.7.0
 transforms3d==0.4.1
