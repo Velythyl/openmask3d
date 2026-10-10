@@ -247,12 +247,13 @@ def _main(args, run: dict) -> None:
     run["weights"] = {"checkpoint": ragmap["checkpoint"], "checkpoint_sha256": _sha256(checkpoint)}
     run["versions"] = {"python": sys.version.split()[0], "torch": torch.__version__, "cuda": torch.version.cuda,
                        "gpu": torch.cuda.get_device_name(0)}
-    try:
-        import MinkowskiEngine
-        import open_clip
-        run["versions"].update({"MinkowskiEngine": MinkowskiEngine.__version__, "open_clip": open_clip.__version__})
-    except Exception:  # noqa: BLE001 - informational only
-        pass
+    from importlib import metadata
+
+    for package in ("MinkowskiEngine", "open_clip_torch", "segment_anything", "numpy", "open3d"):
+        try:
+            run["versions"][package] = metadata.version(package)
+        except metadata.PackageNotFoundError:
+            run["versions"][package] = None
 
     work = Path("/tmp/openmask3d-scene")
     native = output / "openmask3d"

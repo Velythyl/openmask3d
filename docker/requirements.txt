@@ -41,6 +41,7 @@ Pillow==9.3.0
 ftfy==6.1.1
 regex==2023.10.3
 setuptools==68.0.0
+wheel<0.44
 # OpenLex3D ran OpenMask3D with OpenCLIP ViT-H-14 (laion2b_s32b_b79k), the
 # benchmark backbone (paper Sec. 4; the published embeddings are 1024-d). The
 # adapter loads it; upstream's OpenAI `clip` stays installed for its import.

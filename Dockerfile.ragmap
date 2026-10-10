@@ -36,8 +36,9 @@ RUN uv python install 3.8 \
         --index-strategy unsafe-best-match \
         torch==1.12.1+cu113 torchvision==0.13.1+cu113 \
     && printf 'torch==1.12.1+cu113\ntorchvision==0.13.1+cu113\n' > /opt/torch-constraints.txt \
-    && printf 'cython<3\nsetuptools<70\nnumpy==1.23.5\n' > /opt/build-constraints.txt
-# pycocotools 2.0.6 (and other 2022-era sdists) do not compile under Cython 3.
+    && printf 'cython<3\nsetuptools<70\nwheel<0.44\n' > /opt/build-constraints.txt
+# pycocotools 2.0.6 (and other 2022-era sdists) do not compile under Cython 3,
+# and setuptools<70's bdist_wheel needs a wheel that still vendors packaging.
 COPY docker/requirements.txt /tmp/openmask3d-requirements.txt
 RUN uv pip install --python ${VIRTUAL_ENV}/bin/python \
         --index-url https://download.pytorch.org/whl/cu113 \
@@ -48,7 +49,7 @@ RUN uv pip install --python ${VIRTUAL_ENV}/bin/python \
     && uv pip install --python ${VIRTUAL_ENV}/bin/python --no-deps \
         antlr4-python3-runtime==4.8 black==21.4b2 omegaconf==2.0.6 hydra-core==1.0.5 \
     && uv pip install --python ${VIRTUAL_ENV}/bin/python --no-deps \
-        torch-scatter -f https://data.pyg.org/whl/torch-1.12.1+cu113.html \
+        'torch-scatter==2.1.0+pt112cu113' -f https://data.pyg.org/whl/torch-1.12.1+cu113.html \
     && uv pip install --python ${VIRTUAL_ENV}/bin/python --no-deps \
         'git+https://github.com/openai/CLIP.git@a9b1bf5920416aaeaec965c25dd9e8f98c864f16' \
         'git+https://github.com/facebookresearch/segment-anything.git@6fdee8f2727f4506cfbbe553e23b895e27956588'
