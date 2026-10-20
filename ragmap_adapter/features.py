@@ -11,6 +11,14 @@
 
 ``extract_features`` is upstream's loop line for line apart from those two
 points; it also records each mask's top-k views and crop count for run.json.
+
+**Encoder service** (``encoder=`` an ``encoder_client.EncoderClient``, the
+encoder-scaling sweep): the same crops, as PIL images, go to RAGMAP's encoder
+service instead of the in-process OpenCLIP model, which then is never loaded.
+The service applies its own profile's preprocessing and returns unit vectors;
+the per-mask mean (not renormalised), the float64 ``(n_masks, D)`` array and the
+zero row of a mask without crops are unchanged. ``encoder=None`` (builtin) runs
+the code above untouched.
 """
 from __future__ import annotations
 
@@ -28,19 +36,24 @@ from ragmap_adapter.projector import SparsePointProjector
 
 class RagmapFeaturesExtractor(FeaturesExtractor):
     def __init__(self, camera, clip_model, clip_pretrained, images, masks, pointcloud,
-                 sam_model_type, sam_checkpoint, vis_threshold, device, sparse=True):
-        import open_clip
-
+                 sam_model_type, sam_checkpoint, vis_threshold, device, sparse=True, encoder=None):
         self.camera = camera
         self.images = images
         self.device = device
         projector = SparsePointProjector if sparse else PointProjector
         self.point_projector = projector(camera, pointcloud, masks, vis_threshold, images.indices)
         self.predictor_sam = initialize_sam_model(device, sam_model_type, sam_checkpoint)
-        model, _, preprocess = open_clip.create_model_and_transforms(clip_model, pretrained=clip_pretrained, device=device)
-        model.eval()
-        self.clip_model, self.clip_preprocess = model, preprocess
-        self.feature_dim = int(model.visual.output_dim)
+        self.encoder = encoder
+        if encoder is None:
+            import open_clip
+
+            model, _, preprocess = open_clip.create_model_and_transforms(clip_model, pretrained=clip_pretrained, device=device)
+            model.eval()
+            self.clip_model, self.clip_preprocess = model, preprocess
+            self.feature_dim = int(model.visual.output_dim)
+        else:
+            self.clip_model, self.clip_preprocess = None, None
+            self.feature_dim = int(encoder.dim)
         self.top_views = None
         self.crops_per_mask = None
 
@@ -65,7 +78,7 @@ class RagmapFeaturesExtractor(FeaturesExtractor):
         np_images = self.images.get_as_np_list()
         for mask in tqdm(range(num_masks)):
             images_crops = []
-            if optimize_gpu_usage:
+            if optimize_gpu_usage and self.encoder is None:
                 self.clip_model.to(torch.device('cpu'))
                 self.predictor_sam.model.cuda()
             for view_count, view in enumerate(topk_indices_per_mask[mask]):
@@ -84,13 +97,19 @@ class RagmapFeaturesExtractor(FeaturesExtractor):
                         cropped_img = self.images.images[view].crop((x1, y1, x2, y2))
                         if save_crops:
                             cropped_img.save(os.path.join(out_folder, f"crop{mask}_{view}_{level}.png"))
+                        if self.encoder is not None:
+                            images_crops.append(cropped_img)
+                            continue
                         cropped_img_processed = self.clip_preprocess(cropped_img)
                         images_crops.append(cropped_img_processed)
 
-            if optimize_gpu_usage:
+            if optimize_gpu_usage and self.encoder is None:
                 self.predictor_sam.model.cpu()
                 self.clip_model.to(torch.device('cuda'))
-            if len(images_crops) > 0:
+            if len(images_crops) > 0 and self.encoder is not None:
+                # Unit float32 rows from the service; mean as upstream, not renormalised.
+                mask_clip[mask] = self.encoder.embed_images(images_crops).mean(axis=0)
+            elif len(images_crops) > 0:
                 image_input = torch.tensor(np.stack(images_crops))
                 with torch.no_grad():
                     image_features = self.clip_model.encode_image(image_input.to(self.device)).float()

@@ -30,6 +30,11 @@ What runs is upstream's ``run_openmask3d_single_scene.sh``, step for step:
    SAM's point prompts with an unseeded ``np.random.shuffle``; ``ragmap.seed``
    seeds numpy first (recorded in run.json).
 
+   ``ragmap.encoder=http`` (encoder-scaling sweep) sends the same crops to RAGMAP's
+   encoder service at ``ragmap.encoder_service_url`` instead (its profile must be
+   ``ragmap.encoder_profile``); the CLIP weight file is then not needed, and the
+   feature width is the service's. ``builtin`` (the default) is the code above.
+
 OUTPUT::
 
     openmask3d/<scene>_masks.pt                upstream's mask file, unchanged
@@ -84,7 +89,14 @@ RAGMAP_DEFAULTS = {
     # are per point, so features and outputs are unaffected by this choice.
     "mask3d_frame": "build",
     "object_clouds": "true",
+    # Mask-feature encoder: "builtin" (OpenCLIP clip_model/clip_weights in
+    # process) or "http" (RAGMAP's ragmap-encoder-service; Mask3D and SAM are
+    # unchanged). The service is reached over the host network.
+    "encoder": "builtin",
+    "encoder_profile": "",
+    "encoder_service_url": "",
 }
+_ENCODERS = ("builtin", "http")
 
 
 def _bool(value: str) -> bool:
@@ -240,8 +252,21 @@ def _main(args, run: dict) -> None:
     if not torch.cuda.is_available():
         raise RuntimeError("no CUDA device: Mask3D and SAM need a GPU")
     device = torch.device("cuda", 0)
+    if ragmap["encoder"] not in _ENCODERS:
+        raise RuntimeError(f"ragmap.encoder must be one of {_ENCODERS}, not {ragmap['encoder']!r}")
+    encoder = None
+    if ragmap["encoder"] == "http":
+        from ragmap_adapter.encoder_client import EncoderClient
+
+        if not ragmap["encoder_profile"]:
+            raise RuntimeError("ragmap.encoder=http needs ragmap.encoder_profile")
+        encoder = EncoderClient(ragmap["encoder_service_url"], profile=ragmap["encoder_profile"])
+        run["encoder"] = {"mode": "http", "url": encoder.base_url, **encoder.identity()}
     checkpoint = WEIGHTS / ragmap["checkpoint"]
-    for path in (checkpoint, WEIGHTS / ragmap["sam_checkpoint"], WEIGHTS / ragmap["clip_weights"]):
+    required = [checkpoint, WEIGHTS / ragmap["sam_checkpoint"]]
+    if encoder is None:
+        required.append(WEIGHTS / ragmap["clip_weights"])
+    for path in required:
         if not path.is_file():
             raise RuntimeError(f"weight file {path} is missing (mount the weights directory at {WEIGHTS})")
     run["weights"] = {"checkpoint": ragmap["checkpoint"], "checkpoint_sha256": _sha256(checkpoint)}
@@ -302,7 +327,10 @@ def _main(args, run: dict) -> None:
         camera=camera, clip_model=ragmap["clip_model"], clip_pretrained=str(WEIGHTS / ragmap["clip_weights"]),
         images=images, masks=masks, pointcloud=pointcloud, sam_model_type=ragmap["sam_model_type"],
         sam_checkpoint=str(WEIGHTS / ragmap["sam_checkpoint"]), vis_threshold=params["vis_threshold"],
-        device=device, sparse=_bool(ragmap["sparse_projector"]))
+        device=device, sparse=_bool(ragmap["sparse_projector"]), encoder=encoder)
+    if encoder is None:
+        run["encoder"] = {"mode": "builtin", "model": ragmap["clip_model"], "weights": ragmap["clip_weights"],
+                          "dim": extractor.feature_dim}
     run["timings"]["projection_s"] = round(time.time() - tick, 2)
     features = extractor.extract_features(
         topk=params["top_k"], multi_level_expansion_ratio=params["multi_level_expansion_ratio"],
